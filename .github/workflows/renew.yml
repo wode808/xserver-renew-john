@@ -1,26 +1,62 @@
 name: XServer-Vmail-VPS
+
 on:
   workflow_dispatch:
   schedule:
-    - cron: '46 0 */2 * *'
+    - cron: '46 0 * * *'  # 每天触发（北京时间 08:46）
+
 jobs:
   run_xserver_renew:
     runs-on: ubuntu-latest
+
     steps:
       - name: 📥 下载公库代码
         uses: actions/checkout@v4
+
       - name: 📥 下载私库脚本
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository_owner }}/XServer-VPS-Renew
           token: ${{ secrets.PRIVATE_REPO_TOKEN }}
           path: private
+
       - name: 📂 移动脚本到工作目录
         run: mv private/renew.py renew.py
+
       - name: 🐍 设置 Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
+
+      # ✅ 新增：控制每48小时执行（从明天开始）
+      - name: ⏱️ 控制执行频率（每48小时）
+        run: |
+          echo "计算是否需要执行..."
+
+          # 起始时间：明天 00:46 UTC
+          START_TIME=$(date -u -d "tomorrow 00:46" +%s)
+          NOW=$(date +%s)
+
+          DIFF=$((NOW - START_TIME))
+
+          echo "当前时间戳: $NOW"
+          echo "起始时间戳: $START_TIME"
+          echo "差值: $DIFF 秒"
+
+          # 还没到起始时间 → 跳过
+          if [ $DIFF -lt 0 ]; then
+            echo "⏭️ 还没到开始时间，跳过执行"
+            exit 0
+          fi
+
+          # 是否满足48小时周期
+          if (( DIFF / 86400 % 2 != 0 )); then
+            echo "⏭️ 未到48小时周期，跳过执行"
+            exit 0
+          fi
+
+          echo "✅ 满足48小时条件，继续执行"
+
       - name: 🛡️ 启动 Gost 代理转发
         run: |
           wget https://github.com/ginuerzh/gost/releases/download/v2.11.5/gost-linux-amd64-2.11.5.gz
@@ -32,6 +68,7 @@ jobs:
           sleep 3
           echo "测试本地代理连通性..."
           curl -x http://127.0.0.1:8080 https://api.ipify.org -v
+
       - name: 🛠️ 安装系统依赖
         run: |
           sudo apt-get update
@@ -41,10 +78,12 @@ jobs:
             x11-utils \
             xdotool \
             scrot
+
       - name: 🐍 安装 Python 依赖
         run: |
           pip install seleniumbase
           seleniumbase install chromedriver
+
       - name: 🚀 运行脚本
         env:
           PYTHONIOENCODING: utf-8
@@ -53,6 +92,7 @@ jobs:
           TG_BOT: ${{ secrets.TG_BOT }}
         run: |
           xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python renew.py
+
       - name: 📸 上传截图
         if: always()
         uses: actions/upload-artifact@v4
